@@ -1,132 +1,196 @@
 ---
 name: youtube-thumbnail
 description: >
-  Generate a branded YouTube thumbnail from a video title. Uses a reference photo of the creator, high-CTR thumbnail principles, and brand colours to produce a ready-to-generate image prompt for Gemini. Use this skill whenever the user says "thumbnail", "youtube thumbnail", "build me a thumbnail", or wants a video cover image before writing the script. The thumbnail-first workflow mirrors the graphic-first approach for LinkedIn: sells the video before anyone hears a word of the script.
+  Research-driven YouTube thumbnail engine. Finds the highest-performing competitor
+  thumbnails for the topic (SerpAPI, ranked by views/month), extracts their winning
+  patterns, works the Desire Loop to produce four distinct concepts that deliberately
+  break the pattern, gathers reference assets, then generates all four in parallel via
+  Gemini (Nano Banana) into a 1280x720 2x2 comparison grid with a fast iteration loop.
+  Uses a reference photo of the creator and brand colours. Use whenever the user says
+  "thumbnail", "youtube thumbnail", "build me a thumbnail", or wants a video cover image
+  before writing the script. Sells the video before anyone hears a word of the script.
 ---
 
 # YouTube Thumbnail
 
+A research → strategy → concept engine. Don't just template a prompt — find what is
+already winning in this niche, then beat it.
+
 ## CRITICAL: Auto-start on load
 
-When this skill triggers, go straight to Step 1.
+When this skill triggers, go straight to Stage 1. Scripts live in `scripts/`,
+frameworks in `references/`.
 
-## Step 1. Gather inputs
+## Stage 1. Gather inputs
 
-Check the project for a reference photo config. Look in this order:
-
+Find the brand/reference config. Look in this order:
 1. `thumbnail-config.md` in the project root
-2. `brand-kit.md` — look for a reference image path and brand colours
-3. `about-me.md` — for the creator's name and positioning
+2. `brand-kit.md` — reference image path + brand colours
+3. `about-me.md` — creator name and positioning
 
-If a reference photo path is stored, pre-fill it. Otherwise ask:
+Then collect:
+- **Video title or topic** (required). If they only have a topic, offer to propose 3
+  click-worthy titles first.
+- **Any must-include assets** — logos, product shots, screenshots, a specific number.
+- **Reference photo** — if a path is stored, pre-fill it. Otherwise ask for a clear
+  headshot they will reuse across videos for brand consistency.
 
-> Upload or provide the path to the reference photo of yourself you want used in the thumbnail. Ideally a clear headshot with distinctive lighting and expression you plan to reuse across videos for brand consistency.
+## Stage 2. Select the headshot
 
-Then call AskUserQuestion:
+Look for a `headshots/` folder in the project (or this skill's `headshots/`). The
+convention is one image per expression: `surprised.jpg`, `happy.jpg`, `pointing.jpg`,
+`confident.jpg`, `confused.jpg`. Pick the expression that matches each concept's
+emotional tone (set in Stage 4).
+
+If only a single photo exists, use it for all concepts and note to the user that adding
+expression variants (surprised / pointing / confident) will improve results.
+
+## Stage 3. Research the competition
+
+Run the research script with the topic:
+
+```bash
+python3 scripts/research.py "<video topic>" --top 6
+```
+
+It searches YouTube, ranks results by **views-per-month** (recent breakouts beat stale
+evergreen hits), downloads the top thumbnails, and writes a manifest. Note the printed
+`RUN_DIR` — every later stage writes into it.
+
+Then **Read each downloaded thumbnail** (paths are printed and listed in
+`research/manifest.json`) and extract the winning pattern:
+- Dominant colours and background treatment (bright vs dark, flat vs scene)
+- Face placement, size, expression
+- Text style, length, position, devices (strikethrough, numbers, arrows)
+- Recurring composition tropes
+
+Write a short **pattern summary** and a **differentiation directive**: how to stand out.
+If everyone is bright/white, go dark cinematic. If everyone crops face-right with yellow
+text, do something else. Standing out beats looking good. (See
+`references/thumbnail-principles.md`.)
+
+## Stage 4. Work the Desire Loop → four concepts
+
+Using `references/desire-loop.md`, work the loop for this video's viewer:
+**Desired Outcome → Pain Point → Solution → Curiosity Gap.**
+
+Then produce **four distinct concepts**. Make them genuinely different angles (e.g.
+number-led, before/after, contrarian "you're doing it wrong", authority/proof), each
+honouring the differentiation directive from Stage 3. For each concept output:
+
+```
+CONCEPT [A-D]: [one-line angle]
+
+Desire Loop: outcome / pain / solution / gap (one line each)
+Hook text: "[3-5 words, from the gap]"
+Expression: [headshot to use]
+Composition: [face side + %, focal payoff element, text placement]
+Colour palette: [primary hex], [accent hex], [background hex]  (break the pattern)
+Supporting element: [logo / product / number / metaphor]
+```
+
+Present all four, then ask the user to pick favourites or request changes.
+
+## Stage 5. Gather reference assets
+
+For each approved concept, decide what supporting imagery it needs (logos, product
+shots, screenshots, visual metaphors) and gather it:
+
+```bash
+python3 scripts/gather_assets.py "<RUN_DIR>" A "Claude AI logo" "marketing dashboard"
+```
+
+Pass the run directory from Stage 3, the concept label, then one search phrase per asset.
+Downloaded files land in `RUN_DIR/assets/<concept>/` and are listed in
+`assets/manifest.json`. Concepts with no external assets (face + text only) can skip this.
+Skip any asset query for which nothing usable downloads — the concept still generates from
+the headshot and prompt alone.
+
+## Stage 6. Generate
+
+Two paths. Prefer automatic generation when `GEMINI_API_KEY` is available.
+
+**Automatic (Gemini / Nano Banana).** Write the four concepts to `RUN_DIR/concepts.json`,
+then generate all of them in parallel:
 
 ```json
-[
-  {
-    "question": "What is the video title?",
-    "header": "Title",
-    "multiSelect": false,
-    "options": [
-      {"label": "I will type the title", "description": "Type the full working title"},
-      {"label": "Suggest one", "description": "Given the topic, propose 3 click-worthy titles first"}
-    ]
-  },
-  {
-    "question": "Emotional tone?",
-    "header": "Tone",
-    "multiSelect": false,
-    "options": [
-      {"label": "Shock / surprise", "description": "Wide eyes, open mouth, bold reaction"},
-      {"label": "Curious / thinking", "description": "Slight smirk, raised eyebrow, gaze off-frame"},
-      {"label": "Confident / direct", "description": "Eye contact, calm, assertive"},
-      {"label": "Frustrated / strong take", "description": "Intense gaze, hand gesture, tension"}
-    ]
-  }
-]
+// RUN_DIR/concepts.json
+{
+  "topic": "<topic>",
+  "concepts": [
+    {"label": "A", "prompt": "<full image prompt>",
+     "headshot": "<path to selected headshot>",
+     "assets": ["<gathered asset>", "..."]},
+    {"label": "B", "prompt": "...", "headshot": "...", "assets": []}
+  ]
+}
 ```
 
-## Step 2. Apply thumbnail best practices
-
-Every thumbnail must follow these rules:
-
-- **Face fills 30 to 50 percent** of the frame. Readable at small sizes.
-- **3 to 5 words maximum** of large text. 6 if absolutely necessary.
-- **Two colours dominate**. Brand primary + one high-contrast accent (yellow, red, cyan work well).
-- **One clear focal element** besides the face. Tool logo, bold number, arrow, or prop.
-- **High contrast** between face, text, and background. Test by squinting.
-- **Text is not a sentence**. It is a hook phrase. Examples: "I fired my team", "Claude can now...", "Don't do this".
-- **No small text, no logos bottom-right** (watch time icon sits there).
-
-## Step 3. Build the thumbnail brief
-
-Output a concise brief the user can review:
-
-```
-THUMBNAIL BRIEF: [video title]
-
-Composition: [face position, % of frame, direction of gaze]
-Text: "[hook phrase, 3-5 words]"
-Text placement: [left, right, top, wraps around face]
-Colour palette: [primary hex], [accent hex], [background hex]
-Supporting element: [logo / prop / arrow / number]
-Emotional tone: [tone from Step 1]
+```bash
+python3 scripts/generate.py "<RUN_DIR>"          # 4 concepts in parallel -> generated/<label>.png, exact 1280x720
+python3 scripts/make_grid.py "<RUN_DIR>"         # -> RUN_DIR/grid.png (labeled 2x2)
 ```
 
-Then ask:
+Read `RUN_DIR/grid.png` and show the user the four concepts. The default model is
+`gemini-2.5-flash-image`; set `GEMINI_IMAGE_MODEL=gemini-3-pro-image` for higher fidelity.
+Each concept's prompt should bake in the full brief from Stage 4 (composition, hook text,
+palette, supporting element) and the brand guards below.
 
-> Here's the brief. Say "generate" to output the image prompt or tell me what to change.
-
-## Step 4. Output the Gemini prompt
-
-Once approved, output the image generation prompt in a code block:
+**Manual bridge.** If keys are not set, output a Gemini image prompt per concept for the
+user to paste:
 
 ```
-Using the attached reference photo of me, generate a YouTube thumbnail at 1280 x 720 pixels (16:9).
+Using the attached reference photo of me, generate a YouTube thumbnail at 1280 x 720
+pixels (16:9).
 
 Composition:
 - Place me [left / right / centre] filling [30-50]% of the frame
-- My expression: [tone details — e.g., shocked with wide eyes and open mouth]
-- My gaze: [direction — e.g., looking directly at camera / looking off-frame toward the text]
+- Expression: [tone details]
+- Gaze: [direction]
 
 Text:
 - Display "[hook phrase]" in large bold sans-serif typography
-- Text colour: [hex]
-- Text outline: [colour, thickness for readability]
-- Text placement: [specific area]
+- Text colour: [hex]; outline: [colour/thickness for readability]
+- Placement: [specific area, never bottom-right]
 
 Colour palette:
-- Primary: [hex]
-- Accent: [hex]
-- Background: [hex] — [describe treatment: flat, gradient, blurred scene, etc.]
+- Primary [hex], Accent [hex], Background [hex] — [treatment]
 
-Supporting element: [specific description of the supporting visual]
+Supporting element: [specific description]
 
 Constraints:
-- Face must be clear and sharp
-- Text must be readable at 320px wide (YouTube mobile size)
-- No watermarks, no YouTube UI elements, no bottom-right corner text
+- Face clear and sharp; text readable at 320px wide (mobile)
+- No watermarks, no YouTube UI, no bottom-right corner text
 - High contrast between face, text, and background
 ```
 
 Tell the user:
+> Paste each into a new Gemini chat, attach your reference photo, enable Create Image,
+> select Nano Banana, generate at 1280x720.
 
-> Paste this into a new Gemini chat, attach your reference photo, enable Create Image, and select Nano Banana. Generate at 1280x720.
+## Stage 7. Iterate
 
-## Step 5. Offer the next move
+After the user reviews the grid, refine. To spin a favourite into four fresh takes:
 
-> Want me to outline the video next? Hook, mid, CTA from the thumbnail. Or call the create skill if you have one.
+```bash
+python3 scripts/generate.py "<RUN_DIR>" --concept B --variations 4 \
+  --tweak "warmer palette, simplify the text, bigger number"
+python3 scripts/make_grid.py "<RUN_DIR>" --variations   # -> RUN_DIR/variations_grid.png
+```
+
+The `--tweak` text is appended to that concept's prompt, so the user's notes ("remove the
+text", "change to red", "different layout") flow straight through. Read the variations grid,
+show it, and repeat until the user picks a winner. The chosen file in
+`RUN_DIR/generated/` (or `variations/`) is the final 1280x720 thumbnail.
 
 ## Rules
 
 - 1280x720 pixels (16:9). YouTube's native thumbnail size.
-- Never include the reference photo path in the prompt itself — the user attaches the photo separately.
-- Never allow more than 6 words of text, 5 is ideal, 3 is best.
-- Face must always be a visible focal point. No face-hidden compositions.
+- Never put the reference photo path in the prompt itself — the user attaches it separately.
+- Never more than 6 words of text; 5 ideal, 3 best.
+- Face is always a visible focal point. No face-hidden compositions.
 - Never use em dashes.
-- British English unless voice.md specifies otherwise.
-- If brand-kit.md is in the project, read it and use exact brand colours.
-- Recommend the user keep a consistent thumbnail style across videos for channel recognition.
+- British English in prose unless voice.md says otherwise (hook text follows the title).
+- If `brand-kit.md` exists, read it and use exact brand colours.
+- Always ground concepts in the Stage 3 research — never skip straight to generation.
+- Recommend a consistent thumbnail style across videos for channel recognition.
